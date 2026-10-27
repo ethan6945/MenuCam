@@ -68,43 +68,8 @@ The menu bar image is the current Mac app screenshot. Web screenshots use demons
 - MenuCam does not configure port forwarding, Serve or Funnel. Keep the service inside the tailnet.
 - The app is ad-hoc signed, not notarized; macOS may require an explicit Open confirmation.
 
-## Build and test
+## Support
 
-Xcode Command Line Tools are required to build. No third-party packages or telemetry.
+If MenuCam is useful to you, consider buying me a coffee.
 
-```sh
-./build.command
-./start.command
-./verify.command
-```
-
-Optional checks:
-
-```sh
-./verify.command --hardware
-./verify.command --blackout
-```
-
-Default tests use synthetic video/audio and separate test ports; Tailscale must be connected. They do not use the camera. `--hardware` briefly changes and restores actual brightness/audio settings. `--blackout` briefly covers the displays and tests keyboard recovery.
-
-Validation includes authenticated HTTP/photo tests, mobile browser flows, real idle-camera capture, startup readiness, and four consecutive photos during one uninterrupted synthetic recording. The local workflow was accepted by the owner; individual hardware and OS combinations may behave differently.
-
-## Settings and recovery
-
-- Default recording folder: `~/Movies/MenuCam`; existing folder preferences are respected.
-- Access key: `~/Library/Application Support/MenuCam/remote-key`, generated locally with file permissions `0600`.
-- After a crash or force-quit, relaunch MenuCam to retry restoration from its local recovery journal.
-- Brightness controls use private macOS interfaces; third-party displays may not support hardware dimming.
-- System-reserved keys remain under macOS control; OS-owned dialogs follow system language settings.
-- If the room is lit mainly by the screen, dimming it also makes the camera scene genuinely darker.
-
-## HTTP API
-
-All endpoints require `Authorization: Bearer <key>` and empty request bodies. Responses use `Cache-Control: no-store`; cross-origin requests are denied.
-
-| Endpoint | Method | Purpose |
-| --- | --- | --- |
-| `/api/status` | GET | Read state and elapsed time |
-| `/api/start` | POST | Start a take |
-| `/api/stop` | POST | Stop and save |
-| `/api/snapshot` | GET | Get one current JPEG, during recording or idle |
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/ethan6945)
