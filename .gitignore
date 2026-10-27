@@ -1,0 +1,16 @@
+.DS_Store
+*.app/
+*.zip
+*.mov
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.log
+.build/
+.build-cache/
+verify/
+使用说明.md
+remote-key
+.env
+.env.*
