@@ -5,7 +5,7 @@ A native macOS menu bar camera recorder with authenticated Tailscale web control
 ## Features
 
 - Compact menu bar popover: control link and Quit.
-- Mobile web page: start/stop recording and live elapsed time.
+- Mobile web page: start/stop recording and live elapsed time. After saving, the main timer resets to zero and the summary retains the take duration and home-relative save path (starting at Movies for the default folder). Saving time is excluded from the take duration.
 - Triple-tap the web clock to display a current camera photo in place of the clock; tap the photo to restore the clock. Works during recording and while idle.
 - Idle photos use a temporary camera-only session: no recording, microphone, black screen, volume or brightness changes. The camera is released after capture.
 - During recording, full-display black windows cover the screens; supported display brightness goes to zero, automatic brightness is disabled, system output is muted and keyboard backlight is turned off.
@@ -25,7 +25,7 @@ A native macOS menu bar camera recorder with authenticated Tailscale web control
 
 Download the Apple Silicon app ZIP from [Releases](https://github.com/ethan6945/MenuCam/releases), unzip it and open `MenuCam.app`. The app is ad-hoc signed, not notarized; macOS may require an explicit Open confirmation.
 
-Click the menu bar icon. The popover shows this Mac's Tailscale control address. Click to open it, or right-click the address to copy the full authenticated link to your phone. The browser remembers the credential for later visits. Treat that link as a password.
+Click the menu bar icon. The popover shows this Mac's Tailscale control address. Click to open it, or right-click the address to copy the full authenticated link to your phone. The browser remembers the credential for later visits. The full link includes a `#key=...` fragment; copying or bookmarking it preserves access on a new device. A fresh browser opening the bare address shows a device authorization form. Paste the full control link or 64-character access key and select Authorize and Connect. Previously authorized browsers open controls directly. Treat the full link as a password.
 
 The app listens only on detected Tailscale IPv4 `utun` interfaces in `100.64.0.0/10`, on port **8765**. Both this Mac and the phone use the same address. It does not bind to ordinary LAN interfaces or localhost, configure port forwarding, or enable Tailscale Serve/Funnel. Without Tailscale, the popover waits for a connection.
 

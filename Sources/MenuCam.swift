@@ -47,7 +47,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
     private var takeHasAudio = false
     private var takeAudioProblem: String?
     private var timer: Timer?
-    private var started: Date?
+    private var started: TimeInterval?
     private var assertion: IOPMAssertionID = 0
     private var holdsAssertion = false
     private var observers: [NSObjectProtocol] = []
@@ -213,6 +213,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         guard recording && !busy else { return }
         busy = true
         phase = "保存中"
+        freezeRecordingClock()
         restoreQuiet()
         onChange?()
         queue.async {
@@ -229,7 +230,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
             self.phase = "录制中"
             self.elapsed = 0
             self.audioActive = self.takeHasAudio
-            self.started = Date()
+            self.started = ProcessInfo.processInfo.systemUptime
             self.message = self.takeAudioProblem ?? ""
             do { try self.blackout.begin() }
             catch {
@@ -250,7 +251,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
             self.holdsAssertion = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "MenuCam 正在录像" as CFString, &self.assertion) == kIOReturnSuccess
             self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 guard let self, let date = self.started else { return }
-                self.elapsed = Int(Date().timeIntervalSince(date))
+                self.elapsed = Int(ProcessInfo.processInfo.systemUptime - date)
             }
             self.onChange?()
         }
@@ -266,7 +267,14 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
+    private func freezeRecordingClock() {
+        if let started { elapsed = max(0, Int(ProcessInfo.processInfo.systemUptime - started)) }
+        timer?.invalidate(); timer = nil; started = nil
+    }
     private func completeFinish(_ fileURL: URL, error: Error?) {
+        freezeRecordingClock()
+        let duration = Self.formatClock(elapsed)
+        elapsed = 0
         let environmentProblem = restoreQuiet()
         do {
             self.timer?.invalidate()
@@ -279,7 +287,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
             let success = error == nil || (nsError?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool == true)
             self.phase = success ? "已保存" : "录制中断"
             self.lastFile = FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : nil
-            self.message = success ? "已保存：\(fileURL.lastPathComponent)" : "录像异常：\(error?.localizedDescription ?? "未知错误")。请检查保存文件是否可播放。"
+            self.message = success ? "已保存\n录制时长：\(duration)\n保存位置：\n\(Self.displaySavePath(fileURL))" : "录像异常：\(error?.localizedDescription ?? "未知错误")。请检查保存文件是否可播放。\n录制时长：\(duration)"
             if !environmentProblem.isEmpty { self.message += " · " + environmentProblem }
             self.onChange?()
             self.onFinished?()
@@ -435,7 +443,15 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                            "clock": self.clock, "elapsed": self.elapsed, "message": self.message])
         }
     }
-    var clock: String { String(format: "%02d:%02d:%02d", elapsed / 3600, elapsed / 60 % 60, elapsed % 60) }
+    static func displaySavePath(_ file: URL) -> String {
+        let components = file.standardizedFileURL.pathComponents
+        if let index = components.firstIndex(of: "Movies") { return components[index...].joined(separator: "/") }
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path + "/"
+        let path = file.standardizedFileURL.path
+        return path.hasPrefix(home) ? String(path.dropFirst(home.count)) : path
+    }
+    static func formatClock(_ seconds: Int) -> String { String(format: "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60) }
+    var clock: String { Self.formatClock(elapsed) }
 }
 
 struct Panel: View {
@@ -569,6 +585,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MenuCamApp {
     static func main() {
         let app = NSApplication.shared
+        // Check before constructing Recorder: a second copy must not restore the active take's journal.
+        let identifier = Bundle.main.bundleIdentifier ?? "local.junxian.MenuCam"
+        if let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+            existing.activate(options: [.activateIgnoringOtherApps])
+            return
+        }
         let delegate = AppDelegate()
         app.delegate = delegate
         app.run()

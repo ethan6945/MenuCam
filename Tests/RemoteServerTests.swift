@@ -39,7 +39,7 @@ import Foundation
                 return body
             }
             let page = String(decoding: check("/"), as: UTF8.self)
-            precondition(!page.contains("id=\"login\"") && !page.contains("id=\"key\""))
+            precondition(page.contains("id=\"login\"") && page.contains("id=\"authForm\""))
             precondition(page.contains("location.hash") && page.contains("localStorage"))
             for icon in ["/favicon.ico", "/favicon-v1.5.3.ico"] { precondition(check(icon) == WebIcon.favicon) }
             precondition(check("/favicon.png") == WebIcon.smallPNG)
