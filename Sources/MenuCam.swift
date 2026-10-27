@@ -5,7 +5,7 @@ import AVFoundation
 import IOKit.pwr_mgt
 
 final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
-    @Published var phase = "待机"
+    @Published var phase = "Idle"
     @Published var busy = false
     @Published var recording = false
     @Published var elapsed = 0
@@ -63,14 +63,14 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         quietNote = [quiet.restore(), blackout.recover()].filter { !$0.isEmpty }.joined(separator: " · ")
         blackout.onStop = { [weak self] in self?.stop() }
         observers.append(NotificationCenter.default.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: .main) { [weak self] note in
-            self?.handleInterruption((note.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription ?? "摄像头发生错误")
+            self?.handleInterruption((note.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription ?? "A camera error occurred")
         })
         observers.append(NotificationCenter.default.addObserver(forName: .AVCaptureSessionWasInterrupted, object: session, queue: .main) { [weak self] _ in
-            self?.handleInterruption("摄像头被中断，正在结束当前录像。")
+            self?.handleInterruption("Camera interrupted. Finishing the current recording.")
         })
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.recording else { return }
-            self.message = "系统即将休眠，正在保存录像；唤醒后请重新开始。"
+            self.message = "Mac is going to sleep. Saving the recording; start a new take after waking."
             self.stop()
         })
     }
@@ -82,7 +82,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "保存到这里"
+        panel.prompt = "Save Here"
         panel.directoryURL = folder
         NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK, let selected = panel.url {
@@ -94,8 +94,8 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
     func start() {
         guard !busy && !recording else { return }
         busy = true
-        phase = "准备中"
-        message = "正在检查摄像头、麦克风和保存位置…"
+        phase = "Preparing"
+        message = "Checking camera, microphone and save location…"
         quietNote = quiet.begin()
         onChange?()
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -104,10 +104,10 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 DispatchQueue.main.async {
                     if granted { self.requestAudio() }
-                    else { self.fail("需要摄像头权限。请在系统设置 → 隐私与安全性 → 摄像头中允许 MenuCam。") }
+                    else { self.fail("Camera access is required. Allow MenuCam in System Settings > Privacy & Security > Camera.") }
                 }
             }
-        default: fail("摄像头权限未开启。请在系统设置 → 隐私与安全性 → 摄像头中允许 MenuCam。")
+        default: fail("Camera access is disabled. Allow MenuCam in System Settings > Privacy & Security > Camera.")
         }
     }
 
@@ -135,7 +135,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                 try FileManager.default.removeItem(at: probe)
                 let values = try destination.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
                 if let free = values.volumeAvailableCapacityForImportantUsage, free < 512 * 1024 * 1024 {
-                    throw NSError(domain: "MenuCam", code: 1, userInfo: [NSLocalizedDescriptionKey: "保存磁盘空间不足，请至少保留 512 MB。"])
+                    throw NSError(domain: "MenuCam", code: 1, userInfo: [NSLocalizedDescriptionKey: "Not enough disk space. Keep at least 512 MB available."])
                 }
                 // Always the Mac's own camera: never a Continuity Camera phone or
                 // an external/USB device, even when one is set as the system
@@ -143,7 +143,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                 let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
                     ?? AVCaptureDevice.default(for: .video)
                 guard let camera else {
-                    throw NSError(domain: "MenuCam", code: 2, userInfo: [NSLocalizedDescriptionKey: "没有找到内置摄像头。"])
+                    throw NSError(domain: "MenuCam", code: 2, userInfo: [NSLocalizedDescriptionKey: "No built-in camera found."])
                 }
 
                 // Audio is captured separately from the capture session by
@@ -157,10 +157,10 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                         try self.audio.start()
                         audioReady = true
                     } catch {
-                        audioProblem = "麦克风无法启动，本次录像无声。"
+                        audioProblem = "Microphone unavailable. This recording has no audio."
                     }
                 } else {
-                    audioProblem = "未获得麦克风权限，本次录像无声（可在系统设置 → 隐私与安全性 → 麦克风 中允许 MenuCam）。"
+                    audioProblem = "Microphone access is disabled. Recording without audio. Allow MenuCam in System Settings > Privacy & Security > Microphone."
                 }
                 self.takeHasAudio = audioReady
                 self.takeAudioProblem = audioProblem
@@ -175,26 +175,26 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                 catch { self.session.commitConfiguration(); throw error }
                 guard self.session.canAddInput(input) else {
                     self.session.commitConfiguration()
-                    throw NSError(domain: "MenuCam", code: 3, userInfo: [NSLocalizedDescriptionKey: "无法使用摄像头，请关闭其他占用摄像头的软件。"])
+                    throw NSError(domain: "MenuCam", code: 3, userInfo: [NSLocalizedDescriptionKey: "Camera unavailable. Close other apps using it."])
                 }
                 self.session.addInput(input)
                 var preset: AVCaptureSession.Preset = selectedQuality == "720p" ? .hd1280x720 : .hd1920x1080
                 if !self.session.canSetSessionPreset(preset) { preset = .hd1280x720 }
                 guard self.session.canSetSessionPreset(preset) else {
                     self.session.commitConfiguration()
-                    throw NSError(domain: "MenuCam", code: 4, userInfo: [NSLocalizedDescriptionKey: "这台摄像头不支持 720p 及以上画质。"])
+                    throw NSError(domain: "MenuCam", code: 4, userInfo: [NSLocalizedDescriptionKey: "This camera does not support 720p or higher."])
                 }
                 self.session.sessionPreset = preset
                 self.session.outputs.forEach { self.session.removeOutput($0) }
                 guard self.session.canAddOutput(self.adaptiveWriter.captureOutput) else {
                     self.session.commitConfiguration()
-                    throw NSError(domain: "MenuCam", code: 5, userInfo: [NSLocalizedDescriptionKey: "无法创建录像输出。"])
+                    throw NSError(domain: "MenuCam", code: 5, userInfo: [NSLocalizedDescriptionKey: "Unable to create recording output."])
                 }
                 self.session.addOutput(self.adaptiveWriter.captureOutput)
                 self.session.commitConfiguration()
                 self.configureCamera(camera)
                 self.session.startRunning()
-                guard self.session.isRunning else { throw NSError(domain: "MenuCam", code: 6, userInfo: [NSLocalizedDescriptionKey: "摄像头未能启动，请检查是否被其他软件占用。"]) }
+                guard self.session.isRunning else { throw NSError(domain: "MenuCam", code: 6, userInfo: [NSLocalizedDescriptionKey: "Camera could not start. Check whether another app is using it."]) }
                 let formatter = DateFormatter()
                 formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
                 let file = destination.appendingPathComponent("MenuCam_\(formatter.string(from: Date()))_\(UUID().uuidString.prefix(6)).mov")
@@ -212,7 +212,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
     func stop() {
         guard recording && !busy else { return }
         busy = true
-        phase = "保存中"
+        phase = "Saving"
         freezeRecordingClock()
         restoreQuiet()
         onChange?()
@@ -227,14 +227,14 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async {
             self.busy = false
             self.recording = true
-            self.phase = "录制中"
+            self.phase = "Recording"
             self.elapsed = 0
             self.audioActive = self.takeHasAudio
             self.started = ProcessInfo.processInfo.systemUptime
             self.message = self.takeAudioProblem ?? ""
             do { try self.blackout.begin() }
             catch {
-                self.message = "黑屏模式无法启动：\(error.localizedDescription)"
+                self.message = "Unable to start blackout mode: \(error.localizedDescription)"
                 self.stop()
                 return
             }
@@ -244,11 +244,11 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                 // surface it in the panel instead of discovering it later.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     guard let self, self.recording, self.audio.framesDelivered == 0 else { return }
-                    self.message = "麦克风没有送来声音，本次录像可能无声 — 请检查输入设备。"
+                    self.message = "No microphone audio received. This recording may be silent; check the input device."
                     self.audioActive = false
                 }
             }
-            self.holdsAssertion = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "MenuCam 正在录像" as CFString, &self.assertion) == kIOReturnSuccess
+            self.holdsAssertion = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn), "MenuCam is recording" as CFString, &self.assertion) == kIOReturnSuccess
             self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 guard let self, let date = self.started else { return }
                 self.elapsed = Int(ProcessInfo.processInfo.systemUptime - date)
@@ -285,9 +285,9 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
             self.audioActive = false
             let nsError = error as NSError?
             let success = error == nil || (nsError?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool == true)
-            self.phase = success ? "已保存" : "录制中断"
+            self.phase = success ? "Saved" : "Interrupted"
             self.lastFile = FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : nil
-            self.message = success ? "已保存\n录制时长：\(duration)\n保存位置：\n\(Self.displaySavePath(fileURL))" : "录像异常：\(error?.localizedDescription ?? "未知错误")。请检查保存文件是否可播放。\n录制时长：\(duration)"
+            self.message = success ? "Saved\nDuration: \(duration)\nSaved to:\n\(Self.displaySavePath(fileURL))" : "Recording error: \(error?.localizedDescription ?? "Unknown error"). Check whether the saved file is playable.\nDuration: \(duration)"
             if !environmentProblem.isEmpty { self.message += " · " + environmentProblem }
             self.onChange?()
             self.onFinished?()
@@ -311,26 +311,26 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                 camera.focusMode = .autoFocus
                 focusObservation = camera.observe(\.isAdjustingFocus, options: [.new]) { [weak self] device, _ in
                     guard let self, !device.isAdjustingFocus else { return }
-                    self.lockFocus(device, note: "对焦：已自动对焦一次后锁定，画面不会反复对焦。")
+                    self.lockFocus(device, note: "Focus: locked after one autofocus pass.")
                 }
                 let fallback = DispatchWorkItem { [weak self] in
-                    self?.lockFocus(camera, note: "对焦：已锁定当前焦点。")
+                    self?.lockFocus(camera, note: "Focus: current focus locked.")
                 }
                 focusFallback = fallback
                 queue.asyncAfter(deadline: .now() + 6, execute: fallback)
-                note = "对焦：正在自动对焦，完成后自动锁定。"
+                note = "Focus: autofocusing, then locking."
             } else if camera.isFocusModeSupported(.locked) {
                 previousFocus = camera.focusMode
                 camera.focusMode = .locked
-                note = "对焦：摄像头不支持单次自动对焦，已锁定当前焦点。"
+                note = "Focus: single autofocus unsupported; current focus locked."
             } else if camera.isFocusModeSupported(.continuousAutoFocus) {
-                note = "对焦：跟随硬件自动对焦。"
+                note = "Focus: hardware autofocus."
             } else {
-                note = "对焦：固定焦距摄像头，无需处理。"
+                note = "Focus: fixed-focus camera."
             }
-            note += " 弱光：只在画面很暗时自动小幅补光（最多 +1 EV）。"
+            note += " Low light: gentle automatic lift in dark scenes, up to +1 EV."
         } catch {
-            note = "对焦：无法调整，使用摄像头默认设置。弱光补光仍会在画面很暗时自动启用。"
+            note = "Focus: using camera defaults. Low-light enhancement remains available."
         }
         let result = note
         DispatchQueue.main.async { self.cameraNote = result }
@@ -384,7 +384,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         busy = false
         recording = false
         audioActive = false
-        phase = "无法开始"
+        phase = "Unable to Start"
         message = reason
         onChange?()
         onFinished?()
@@ -392,7 +392,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
 
     @discardableResult private func restoreQuiet() -> String {
         let problem = [blackout.end(), quiet.restore()].filter { !$0.isEmpty }.joined(separator: " · ")
-        quietNote = problem.isEmpty ? "录制环境已恢复" : problem
+        quietNote = problem.isEmpty ? "Recording settings restored" : problem
         if !problem.isEmpty { message = problem }
         return problem
     }
@@ -401,6 +401,7 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         remote.snapshotHandler = { [weak self] completion in
             guard let self, !self.busy else { completion(409, nil); return }
             if self.recording {
+                // Read-only live-frame request: never stop/reconfigure capture or alter blackout state.
                 self.queue.async {
                     self.adaptiveWriter.requestSnapshot { result in
                         switch result { case .success(let image): completion(200, image); case .failure: completion(503, nil) }
@@ -408,10 +409,10 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
                 }
             } else {
                 self.busy = true
-                self.phase = "取图中"
+                self.phase = "Taking Photo"
                 let finish: (Int, Data?) -> Void = { [weak self] code, data in
                     DispatchQueue.main.async {
-                        self?.busy = false; self?.phase = "待机"
+                        self?.busy = false; self?.phase = "Idle"
                         completion(code, data)
                     }
                 }
@@ -465,7 +466,7 @@ struct Panel: View {
                 .accessibilityHidden(true)
             RemoteFooter(server: model.remote)
             Spacer(minLength: 0)
-            Button("退出", action: quit).buttonStyle(.borderless).font(.system(size: 11))
+            Button("Quit", action: quit).buttonStyle(.borderless).font(.system(size: 11))
         }.padding(10).frame(width: 250).fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -477,9 +478,9 @@ struct RemoteFooter: View {
             if let address = server.controlAddress, let link = server.controlURL {
                 Button(address) { NSWorkspace.shared.open(link) }
                     .buttonStyle(.plain)
-                    .help("打开远端控制；右键复制链接")
+                    .help("Open remote control; right-click to copy the link")
                     .contextMenu {
-                        Button("复制控制链接") {
+                        Button("Copy Control Link") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(link.absoluteString, forType: .string)
                         }

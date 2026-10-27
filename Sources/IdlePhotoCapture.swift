@@ -16,30 +16,30 @@ final class IdlePhotoCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     private var requestID = UUID()
     func capture(_ callback: @escaping (Result<Data, Error>) -> Void) {
         queue.async {
-            guard self.completion == nil else { callback(.failure(Self.error("摄像头正在取图"))); return }
+            guard self.completion == nil else { callback(.failure(Self.error("The camera is taking a photo"))); return }
             let requestID = UUID(); self.requestID = requestID
             self.completion = callback; self.frames = 0; self.capturing = false; self.readiness = CameraFrameReadiness()
             do {
-                guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified) ?? AVCaptureDevice.default(for: .video) else { throw Self.error("未找到摄像头") }
+                guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified) ?? AVCaptureDevice.default(for: .video) else { throw Self.error("No camera found") }
                 self.camera = camera
                 self.session.beginConfiguration()
                 self.session.sessionPreset = self.session.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .high
                 do {
                     let input = try AVCaptureDeviceInput(device: camera)
-                    guard self.session.canAddInput(input) else { throw Self.error("摄像头被其他程序占用") }
+                    guard self.session.canAddInput(input) else { throw Self.error("The camera is in use by another app") }
                     self.session.addInput(input)
                     self.output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
                     self.output.alwaysDiscardsLateVideoFrames = true
                     self.output.setSampleBufferDelegate(self, queue: self.queue)
-                    guard self.session.canAddOutput(self.output) else { throw Self.error("无法创建取图输出") }
+                    guard self.session.canAddOutput(self.output) else { throw Self.error("Unable to create photo output") }
                     self.session.addOutput(self.output)
                     self.session.commitConfiguration()
                 } catch { self.session.commitConfiguration(); throw error }
                 self.session.startRunning()
-                guard self.session.isRunning else { throw Self.error("摄像头未能启动") }
+                guard self.session.isRunning else { throw Self.error("The camera could not start") }
                 self.queue.asyncAfter(deadline: .now() + 6) { [weak self] in
                     guard let self, self.completion != nil, self.requestID == requestID else { return }
-                    self.finish(.failure(Self.error("摄像头持续未提供有效画面，请检查摄像头或光线后重试")))
+                    self.finish(.failure(Self.error("No valid camera image received. Check the camera and lighting, then retry.")))
                 }
             } catch { self.finish(.failure(error)) }
         }
@@ -55,7 +55,7 @@ final class IdlePhotoCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         let preview = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let quality = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
         let data = context.jpegRepresentation(of: preview, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [quality: 0.65])
-        queue.async { self.finish(data.map { .success($0) } ?? .failure(Self.error("无法生成照片"))) }
+        queue.async { self.finish(data.map { .success($0) } ?? .failure(Self.error("Unable to generate the photo"))) }
     }
     private func finish(_ result: Result<Data, Error>) {
         guard let callback = completion else { return }

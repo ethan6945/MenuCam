@@ -7,6 +7,7 @@ import ImageIO
 final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let captureOutput = AVCaptureVideoDataOutput()
     private let context = CIContext(options: [.cacheIntermediates: false])
+    private let photoQueue = DispatchQueue(label: "MenuCam.snapshotEncoding", qos: .utility)
     private let photoContext = CIContext(options: [.cacheIntermediates: false])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private var startupBlackSince: TimeInterval?
@@ -41,8 +42,8 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private var photoEncoding = false
     // Use a frame no older than 150 ms, or wait for the next frame if the stream stalled.
     func requestSnapshot(_ completion: @escaping (Result<Data, Error>) -> Void) {
-        guard active else { completion(.failure(Self.error("当前未录制"))); return }
-        guard snapshot == nil, !photoEncoding else { completion(.failure(Self.error("正在获取照片，请稍候"))); return }
+        guard active else { completion(.failure(Self.error("Not recording"))); return }
+        guard snapshot == nil, !photoEncoding else { completion(.failure(Self.error("Taking a photo. Please wait."))); return }
         if let frame = latestPhotoFrame, ProcessInfo.processInfo.systemUptime - latestPhotoTime < 0.15 {
             encodePhoto(frame, completion: completion)
             return
@@ -52,13 +53,13 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         queue.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self, self.snapshot?.id == id else { return }
             self.snapshot = nil
-            completion(.failure(Self.error("摄像头暂未提供新画面，请重试")))
+            completion(.failure(Self.error("No new camera frame received. Please retry.")))
         }
     }
     private func encodePhoto(_ image: CIImage, completion: @escaping (Result<Data, Error>) -> Void) {
         photoEncoding = true
         let context = photoContext, colorSpace = self.colorSpace
-        DispatchQueue.global(qos: .userInitiated).async {
+        photoQueue.async {
             let scale = min(1, 960 / max(image.extent.width, image.extent.height))
             let preview = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let quality = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
@@ -66,7 +67,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             self.queue.async {
                 self.photoEncoding = false
                 if let jpeg { completion(.success(jpeg)) }
-                else { completion(.failure(Self.error("无法生成照片"))) }
+                else { completion(.failure(Self.error("Unable to generate the photo"))) }
             }
         }
     }
@@ -100,7 +101,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         lastDiskCheck = .distantPast
         queue.asyncAfter(deadline: .now() + 12) { [weak self] in
             guard let self, self.active, self.file == file, self.writer == nil else { return }
-            self.finish(error: Self.error("摄像头没有送出画面，请重试。"))
+            self.finish(error: Self.error("No camera frames received. Please retry."))
         }
     }
 
@@ -130,7 +131,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
                     lastDiskCheck = Date()
                     let values = try file.deletingLastPathComponent().resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
                     if let free = values.volumeAvailableCapacityForImportantUsage, free < 256 * 1024 * 1024 {
-                        finish(error: Self.error("磁盘剩余空间不足，已停止录像。"))
+                        finish(error: Self.error("Low disk space. Recording stopped."))
                         return
                     }
                 }
@@ -139,13 +140,13 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
                     if CameraFrameReadiness.isBlack(light) {
                         let now = ProcessInfo.processInfo.systemUptime
                         if startupBlackSince == nil { startupBlackSince = now }
-                        if now - startupBlackSince! >= 3 { finish(error: Self.error("摄像头持续返回黑帧，请检查摄像头或光线")) }
+                        if now - startupBlackSince! >= 3 { finish(error: Self.error("Camera is returning black frames. Check the camera and lighting.")) }
                         return
                     }
                     try prepare(source: source, file: file, timestamp: timestamp)
                 }
                 guard let writer, let videoInput, let adaptor else { return }
-                guard writer.status == .writing else { throw writer.error ?? Self.error("视频编码器停止工作。") }
+                guard writer.status == .writing else { throw writer.error ?? Self.error("Video encoder stopped.") }
                 guard videoInput.isReadyForMoreMediaData else { return }
                 var image = CIImage(cvPixelBuffer: source)
                 // Mirror first, so the file reads like looking in a mirror.
@@ -169,14 +170,14 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
                     // Nothing to change: pass the source frame through untouched.
                     appended = adaptor.append(source, withPresentationTime: timestamp)
                 } else {
-                    guard let pool = adaptor.pixelBufferPool else { throw Self.error("无法创建视频帧缓冲区。") }
+                    guard let pool = adaptor.pixelBufferPool else { throw Self.error("Unable to create a video frame buffer.") }
                     var destination: CVPixelBuffer?
                     let result = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destination)
-                    guard result == kCVReturnSuccess, let destination else { throw Self.error("视频帧内存不足。") }
+                    guard result == kCVReturnSuccess, let destination else { throw Self.error("Insufficient memory for video frames.") }
                     context.render(processed, to: destination, bounds: image.extent, colorSpace: colorSpace)
                     appended = adaptor.append(destination, withPresentationTime: timestamp)
                 }
-                guard appended else { throw writer.error ?? Self.error("写入视频帧失败。") }
+                guard appended else { throw writer.error ?? Self.error("Unable to write a video frame.") }
                 latestPhotoFrame = processed
                 latestPhotoTime = ProcessInfo.processInfo.systemUptime
                 if let request = snapshot {
@@ -252,7 +253,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             ]
         ]
         let settings = writer.canApply(outputSettings: hevc, forMediaType: .video) ? hevc : h264
-        guard writer.canApply(outputSettings: settings, forMediaType: .video) else { throw Self.error("编码器不支持当前画质。") }
+        guard writer.canApply(outputSettings: settings, forMediaType: .video) else { throw Self.error("Encoder does not support this video quality.") }
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         videoInput.expectsMediaDataInRealTime = true
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [
@@ -261,7 +262,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:]
         ])
-        guard writer.canAdd(videoInput) else { throw Self.error("无法建立视频写入通道。") }
+        guard writer.canAdd(videoInput) else { throw Self.error("Unable to create the video writer input.") }
         writer.add(videoInput)
 
         var audioInput: AVAssetWriterInput?
@@ -280,7 +281,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             }
         }
 
-        guard writer.startWriting() else { throw writer.error ?? Self.error("无法开始写入视频。") }
+        guard writer.startWriting() else { throw writer.error ?? Self.error("Unable to start writing video.") }
         writer.startSession(atSourceTime: timestamp)
         self.writer = writer
         self.videoInput = videoInput
@@ -297,16 +298,16 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         latestPhotoTime = 0
         if let request = snapshot {
             snapshot = nil
-            request.completion(.failure(Self.error("录制已结束，未取得照片")))
+            request.completion(.failure(Self.error("Recording ended before the photo was captured.")))
         }
         terminalError = error
         pendingAudio.removeAll()
         guard let writer, let videoInput else {
-            onFinish?(file, error ?? Self.error("没有收到可保存的视频帧。"))
+            onFinish?(file, error ?? Self.error("No video frames available to save."))
             return
         }
         guard writer.status == .writing else {
-            let result = error ?? writer.error ?? Self.error("录像写入失败。")
+            let result = error ?? writer.error ?? Self.error("Unable to write the recording.")
             releaseWriter()
             onFinish?(file, result)
             return
@@ -318,7 +319,7 @@ final class AdaptiveWriter: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         audioInput?.markAsFinished()
         writer.finishWriting { [weak self] in
             guard let self else { return }
-            let result = self.terminalError ?? (writer.status == .completed ? nil : writer.error ?? Self.error("保存录像失败。"))
+            let result = self.terminalError ?? (writer.status == .completed ? nil : writer.error ?? Self.error("Unable to save the recording."))
             self.queue.async {
                 // Drop the writer graph so nothing keeps the file open.
                 self.releaseWriter()

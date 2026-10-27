@@ -45,7 +45,7 @@ final class AudioCapture {
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
             self.engine = nil
-            throw Self.error("没有可用的麦克风输入格式（检查麦克风权限与输入设备）。")
+            throw Self.error("No usable microphone input format. Check microphone permissions and the input device.")
         }
         sampleRate = format.sampleRate
         enhancer = SpeechEnhancer(sampleRate: format.sampleRate)
@@ -69,7 +69,7 @@ final class AudioCapture {
         voiceProcessing = false
         voiceProcessingFailure = nil
         backend = "AVAudioEngine"
-        formatSummary = "\(Int(sampleRate)) Hz 单声道 · 整体增强"
+        formatSummary = "\(Int(sampleRate)) Hz mono · enhanced"
     }
 
     func stop() {

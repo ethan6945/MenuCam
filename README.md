@@ -1,95 +1,110 @@
 # MenuCam
 
-A native macOS menu bar camera recorder with authenticated Tailscale web control.
+A small macOS menu bar camera recorder with English UI and private Tailscale web control.
+
+**[Download the latest Mac app](https://github.com/ethan6945/MenuCam/releases/latest)** · Apple Silicon · macOS 13+
 
 ## Screenshots
 
-### Menu bar
+### Mac menu bar
 
-<img src="docs/screenshots/menu-bar.png" width="552" alt="MenuCam menu bar popover showing the control address and Quit">
+<img src="docs/screenshots/menu-bar.png" width="704" alt="Current MenuCam menu bar icon and compact control-link popover">
 
-### Mobile web
+### Web control and first-device authorization
 
-<img src="docs/screenshots/web-control.png" width="320" alt="MenuCam web recording controls and elapsed timer"> <img src="docs/screenshots/web-authorization.png" width="320" alt="MenuCam first-device authorization page">
+<img src="docs/screenshots/web-control.png" width="320" alt="English recording controls with live timer"> <img src="docs/screenshots/web-authorization.png" width="320" alt="English device authorization page">
 
-Left: recording controls. Right: first-device authorization. Screenshots use an example address and demonstration state; no real camera images or credentials are shown.
+### After saving
 
-## Features
+<img src="docs/screenshots/web-saved.png" width="320" alt="Timer reset to zero with duration and Movies-relative save location">
 
-- Compact menu bar popover: control link and Quit.
-- Mobile web page: start/stop recording and live elapsed time. After saving, the main timer resets to zero and the summary retains the take duration and home-relative save path (starting at Movies for the default folder). Saving time is excluded from the take duration.
-- Triple-tap the web clock to display a current camera photo in place of the clock; tap the photo to restore the clock. Works during recording and while idle.
-- Idle photos use a temporary camera-only session: no recording, microphone, black screen, volume or brightness changes. The camera is released after capture.
-- During recording, full-display black windows cover the screens; supported display brightness goes to zero, automatic brightness is disabled, system output is muted and keyboard backlight is turned off.
-- A keyboard event stops the take, dismisses black windows and restores the previous settings. The web server stays running.
-- Mirrored local MOV recording, optional microphone audio, gentle low-light enhancement, one-pass focus locking where supported, disk-space checks and camera interruption handling.
-- Rejects initial all-black camera frames and waits briefly for exposure settling before an idle photo.
-- Photos are handled in memory, are not saved as photo files or browser storage, and are removed from the page on dismissal.
+The menu bar image is the current Mac app screenshot. Web screenshots use demonstration data; no camera photos or access keys are shown.
 
-## Requirements
+## Get started
 
-- Apple Silicon Mac, macOS 13 or later.
-- Built-in camera and macOS camera permission. Microphone permission is optional for recording with sound.
-- Tailscale on the Mac and controlling device, in the same tailnet. ACLs must allow TCP 8765 to the Mac.
-- Xcode Command Line Tools to build from source.
+1. Download the ZIP, unzip it, and open `MenuCam.app`.
+2. Allow camera access on the Mac; allow the microphone if you want audio.
+3. Connect the Mac and phone to the same Tailscale network.
+4. Click the MenuCam menu bar icon to see the control address.
+5. Right-click the address, choose **Copy Control Link**, and open that full link on your phone.
+6. If **Device Authorization** appears, paste the control link or access key and select **Authorize & Connect**.
+7. Bookmark the full link for next time; the browser remembers authorized access.
 
-## Run
+## How to use
 
-Download the Apple Silicon app ZIP from [Releases](https://github.com/ethan6945/MenuCam/releases), unzip it and open `MenuCam.app`. The app is ad-hoc signed, not notarized; macOS may require an explicit Open confirmation.
+- **Open web control:** click the address in the Mac popover.
+- **Start recording:** select **Start Recording** on the web page.
+- **Stop from the web:** select **Stop & Save**.
+- **Stop from the Mac:** press a keyboard key while blackout mode is active.
+- **Take a current photo:** quickly tap the web timer three times, with less than 450 ms between taps.
+- **Hide the photo:** tap the image once to clear it and show the timer again.
+- **Take a photo while recording:** the existing video stream supplies the image; recording and timing continue uninterrupted.
+- **Take a photo while idle:** the camera opens briefly for one photo, then closes; no recording or blackout starts.
+- **Find a saved video:** read **Saved to** below the timer; the default path starts at `Movies/MenuCam/`.
+- **Check the take length:** read **Duration** in the saved result; saving time is excluded.
+- **Start another take:** the main timer resets to `00:00:00` after saving.
+- **Quit the app:** select **Quit** in the Mac popover.
 
-Click the menu bar icon. The popover shows this Mac's Tailscale control address. Click to open it, or right-click the address to copy the full authenticated link to your phone. The browser remembers the credential for later visits. The full link includes a `#key=...` fragment; copying or bookmarking it preserves access on a new device. A fresh browser opening the bare address shows a device authorization form. Paste the full control link or 64-character access key and select Authorize and Connect. Previously authorized browsers open controls directly. Treat the full link as a password.
+## What happens during recording
 
-The app listens only on detected Tailscale IPv4 `utun` interfaces in `100.64.0.0/10`, on port **8765**. Both this Mac and the phone use the same address. It does not bind to ordinary LAN interfaces or localhost, configure port forwarding, or enable Tailscale Serve/Funnel. Without Tailscale, the popover waits for a connection.
+- Black windows cover the Mac screens.
+- Supported display brightness is set to zero and automatic brightness is turned off.
+- System audio output is muted and supported keyboard backlight is turned off.
+- Stopping restores the original display, audio and keyboard settings.
+- Closing the popover or stopping a take keeps the web server online.
+- Photos stay in memory only; they are not saved as photo files or browser storage.
+- Videos are saved locally as mirrored MOV files, with microphone audio when permitted.
+- Camera startup black frames are skipped; cold camera photos may take several seconds.
+- Browser tabs, bookmarks and phone home-screen shortcuts use the App's logo.
+- Only one MenuCam instance runs, avoiding competing web servers.
 
-The server runs while MenuCam remains open. Closing the popover or stopping a recording does not stop it.
+## Requirements and access
 
-### Web photo
+- Apple Silicon Mac, macOS 13+, with a camera.
+- Tailscale on both devices; allow TCP **8765** to the Mac in the tailnet ACLs.
+- Both this Mac and the phone use the same Tailscale address.
+- Full control links contain `#key=...`; treat them like passwords.
+- The server binds only to Tailscale IPv4 `utun` addresses, not ordinary LAN or localhost.
+- MenuCam does not configure port forwarding, Serve or Funnel. Keep the service inside the tailnet.
+- The app is ad-hoc signed, not notarized; macOS may require an explicit Open confirmation.
 
-Quickly click/tap the clock three times, with less than 450 ms between taps. The clock is replaced by one current camera image; click that image to discard it and restore the clock. Recording continues if a take is active.
+## Build and test
 
-A cold camera start can take several seconds. First-time camera permission must be granted on the Mac. A missing or persistently black camera frame returns an error instead of a misleading black photo.
-
-## Build
+Xcode Command Line Tools are required to build. No third-party packages or telemetry.
 
 ```sh
 ./build.command
 ./start.command
+./verify.command
 ```
 
-Build produces `MenuCam.app` in this directory, targeting Apple Silicon and macOS 13+. It uses system frameworks only; no third-party packages or telemetry.
-
-## Verify
-
-Connect Tailscale before running HTTP integration checks:
+Optional checks:
 
 ```sh
-./verify.command
 ./verify.command --hardware
 ./verify.command --blackout
 ```
 
-The default checks use synthetic audio/video, a separate HTTP test port, and simulated display settings. They do not use the camera. `--hardware` briefly changes actual audio/keyboard/display brightness and restores it. `--blackout` briefly covers the screens with black windows and posts a keyboard event to verify recovery and continued HTTP availability.
+Default tests use synthetic video/audio and separate test ports; Tailscale must be connected. They do not use the camera. `--hardware` briefly changes and restores actual brightness/audio settings. `--blackout` briefly covers the displays and tests keyboard recovery.
 
-Current validation includes synthetic MOV/audio/mirror/low-light tests; authenticated HTTP and icon responses; browser photo display/dismissal; and real idle-camera capture. A complete physical-camera recording and phone-to-Mac end-to-end workflow have not been exhaustively tested.
+Validation includes authenticated HTTP/photo tests, mobile browser flows, real idle-camera capture, startup readiness, and four consecutive photos during one uninterrupted synthetic recording. The local workflow was accepted by the owner; individual hardware and OS combinations may behave differently.
 
 ## Settings and recovery
 
-- Recordings default to `~/Movies/MenuCam`. Existing saved folder preferences remain supported.
-- The random 32-byte web credential lives in `~/Library/Application Support/MenuCam/remote-key`, with file permissions `0600` and directory permissions `0700`. It is generated on the user's Mac and is not bundled with the app.
-- Initial audio, keyboard and display settings are journaled locally before changes. Stop, failure and normal exit attempt restoration. After a crash or force-quit, relaunch MenuCam to retry recovery; unplugged devices may require another retry.
-- Display/keyboard brightness controls use private macOS interfaces. Future OS releases may change them. Some third-party external displays cannot be dimmed in hardware, but black windows still cover them.
-- macOS-reserved keys remain under system control. Screen topology changes or app deactivation end a take so stale black overlays do not remain.
-- Screen light is not camera illumination: setting screen brightness to zero can make a screen-lit room genuinely darker.
+- Default recording folder: `~/Movies/MenuCam`; existing folder preferences are respected.
+- Access key: `~/Library/Application Support/MenuCam/remote-key`, generated locally with file permissions `0600`.
+- After a crash or force-quit, relaunch MenuCam to retry restoration from its local recovery journal.
+- Brightness controls use private macOS interfaces; third-party displays may not support hardware dimming.
+- System-reserved keys remain under macOS control; OS-owned dialogs follow system language settings.
+- If the room is lit mainly by the screen, dimming it also makes the camera scene genuinely darker.
 
-## HTTP interface
+## HTTP API
 
-All API requests require `Authorization: Bearer <key>`. Responses use `Cache-Control: no-store`; cross-origin requests are denied.
+All endpoints require `Authorization: Bearer <key>` and empty request bodies. Responses use `Cache-Control: no-store`; cross-origin requests are denied.
 
-| Endpoint | Method | Result |
+| Endpoint | Method | Purpose |
 | --- | --- | --- |
-| `/api/status` | GET | Recording state, busy state, phase and elapsed time |
-| `/api/start` | POST | Start a recording |
-| `/api/stop` | POST | Stop and save the current take |
-| `/api/snapshot` | GET | One JPEG from the current take or a temporary idle camera session |
-
-Requests must have empty bodies. Keep this HTTP service inside the tailnet; do not proxy it to the public internet.
+| `/api/status` | GET | Read state and elapsed time |
+| `/api/start` | POST | Start a take |
+| `/api/stop` | POST | Stop and save |
+| `/api/snapshot` | GET | Get one current JPEG, during recording or idle |

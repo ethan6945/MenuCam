@@ -17,15 +17,15 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>MenuCam</string>
 <key>CFBundleDisplayName</key><string>MenuCam</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.5.10</string>
-<key>CFBundleVersion</key><string>27</string>
+<key>CFBundleShortVersionString</key><string>1.5.12</string>
+<key>CFBundleVersion</key><string>29</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
-<key>NSCameraUsageDescription</key><string>MenuCam 使用摄像头，将你主动开始的录像保存在你选择的本地文件夹。</string>
-<key>NSMicrophoneUsageDescription</key><string>MenuCam 使用麦克风，把声音一起录进保存在本机的视频；音频不连接网络。</string>
+<key>NSCameraUsageDescription</key><string>MenuCam uses the camera for recordings and on-demand photos. Recordings are saved to your chosen local folder; photos stay in memory.</string>
+<key>NSMicrophoneUsageDescription</key><string>MenuCam uses the microphone to add audio to videos saved on this Mac. Audio is not streamed over the network.</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP"
-echo "已构建：$APP"
+echo "Built: $APP"

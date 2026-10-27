@@ -17,7 +17,7 @@ import Foundation
         server.start(directory: directory) { path in
             if path == "/api/start", !recording { recording = true; transitions += 1 }
             if path == "/api/stop", recording { recording = false; transitions += 1 }
-            return (200, ["recording": recording, "busy": false, "clock": "00:00:05", "phase": recording ? "录制中" : "待机", "elapsed": 5, "message": ""])
+            return (200, ["recording": recording, "busy": false, "clock": "00:00:05", "phase": recording ? "Recording" : "Idle", "elapsed": 5, "message": ""])
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
             func check(_ path: String, _ method: String = "GET", auth: Bool = false, origin: String? = nil, code: Int = 200) -> Data {

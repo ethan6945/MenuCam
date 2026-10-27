@@ -97,7 +97,7 @@ final class QuietMode {
                 if let master = originalVolumes["0"] { originalVolumes = ["0": master] }
                 journal["channels"] = originalVolumes
                 journal["mute"] = muted; save(journal)
-                result.append(write(device, kAudioDevicePropertyMute, value: UInt32(1)) ? "输出已静音" : "输出静音失败")
+                result.append(write(device, kAudioDevicePropertyMute, value: UInt32(1)) ? "Audio output muted" : "Unable to mute audio output")
             } else {
                 var channels: [String: Float] = [:]
                 // Prefer master volume, otherwise mute each output channel.
@@ -119,14 +119,14 @@ final class QuietMode {
                 }
                 journal["channels"] = channels; save(journal)
                 let success = !channels.isEmpty && channels.map { write(device, kAudioDevicePropertyVolumeScalar, UInt32($0.key)!, value: Float(0)) }.allSatisfy { $0 }
-                result.append(success ? "输出音量已归零" : "此输出设备无法自动静音")
+                result.append(success ? "Output volume set to zero" : "This output device cannot be muted automatically")
             }
-        } else { result.append("无法读取输出设备") }
+        } else { result.append("Unable to read the output device") }
         if let value = brightness(), let automatic = automaticBrightness() {
             journal["brightness"] = value; journal["automatic"] = automatic; journal["keyboardID"] = keyboardID; save(journal)
             let autoOff = setAutomaticBrightness(false)
-            result.append(autoOff && setBrightness(0) ? "键盘背光已关闭" : "键盘背光控制不可用")
-        } else { result.append("此 Mac 不支持键盘背光控制") }
+            result.append(autoOff && setBrightness(0) ? "Keyboard backlight off" : "Keyboard backlight controls unavailable")
+        } else { result.append("Keyboard backlight controls are not supported on this Mac") }
         save(journal)
         return result.joined(separator: " · ")
     }
@@ -136,25 +136,25 @@ final class QuietMode {
         if let id = journal["keyboardID"] as? NSNumber { keyboardID = id.uint64Value }
         if let value = journal["brightness"] as? NSNumber {
             if setBrightness(value.floatValue) { journal.removeValue(forKey: "brightness") }
-            else { failures.append("键盘背光恢复失败") }
+            else { failures.append("Unable to restore keyboard backlight") }
         }
         if let automatic = journal["automatic"] as? NSNumber {
             if setAutomaticBrightness(automatic.boolValue) { journal.removeValue(forKey: "automatic") }
-            else { failures.append("键盘自动亮度恢复失败") }
+            else { failures.append("Unable to restore keyboard automatic brightness") }
         }
         if let number = journal["device"] as? NSNumber, let expected = journal["uid"] as? String {
             if let device = findDevice(uid: expected, previous: number.uint32Value) {
                 if let value = journal["mute"] as? NSNumber {
                     if write(device, kAudioDevicePropertyMute, value: value.uint32Value) { journal.removeValue(forKey: "mute") }
-                    else { failures.append("输出静音状态恢复失败") }
+                    else { failures.append("Unable to restore audio mute settings") }
                 }
                 if let channels = journal["channels"] as? [String: NSNumber] {
                     var remaining = channels
                     for (e, v) in channels where write(device, kAudioDevicePropertyVolumeScalar, UInt32(e)!, value: v.floatValue) { remaining.removeValue(forKey: e) }
                     if remaining.isEmpty { journal.removeValue(forKey: "channels") }
-                    else { journal["channels"] = remaining; failures.append("输出音量恢复失败") }
+                    else { journal["channels"] = remaining; failures.append("Unable to restore output volume") }
                 }
-            } else if journal["mute"] != nil || (journal["channels"] as? [String: NSNumber])?.isEmpty == false { failures.append("原输出设备已变更，待下次重试恢复") }
+            } else if journal["mute"] != nil || (journal["channels"] as? [String: NSNumber])?.isEmpty == false { failures.append("Original output device unavailable. Recovery will be retried.") }
         }
         if failures.isEmpty { defaults.removeObject(forKey: key); defaults.synchronize() } else { save(journal) }
         return failures.joined(separator: " · ")

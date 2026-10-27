@@ -59,7 +59,7 @@ final class RemoteServer: ObservableObject {
     let port: UInt16
     init(port: UInt16 = 8765) { self.port = port }
     @Published private(set) var addresses: [String] = []
-    @Published private(set) var status = "正在启动"
+    @Published private(set) var status = "Starting"
     private let queue = DispatchQueue(label: "MenuCam.web")
     private var listeners: [String: HTTPListener] = [:]
     private var clients: [UUID: HTTPConnection] = [:]
@@ -98,7 +98,7 @@ final class RemoteServer: ObservableObject {
         if FileManager.default.fileExists(atPath: file.path) {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
             let value = try String(contentsOf: file, encoding: .utf8)
-            guard value.count == 64, value.allSatisfy({ $0.isHexDigit }) else { throw NSError(domain: "MenuCam", code: 10, userInfo: [NSLocalizedDescriptionKey: "访问密钥文件无效"] ) }
+            guard value.count == 64, value.allSatisfy({ $0.isHexDigit }) else { throw NSError(domain: "MenuCam", code: 10, userInfo: [NSLocalizedDescriptionKey: "Invalid access key file"] ) }
             return value
         }
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -112,7 +112,7 @@ final class RemoteServer: ObservableObject {
         self.handler = handler
         do {
             token = try Self.loadKey(directory: directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MenuCam", isDirectory: true))
-        } catch { status = "远端服务未启动：\(error.localizedDescription)"; return }
+        } catch { status = "Remote server could not start: \(error.localizedDescription)"; return }
         queue.async {
             self.updateListeners()
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
@@ -123,12 +123,12 @@ final class RemoteServer: ObservableObject {
     }
     private func updateListeners() {
         let targets = Set(Self.tailAddresses())
-        if targets.isEmpty { DispatchQueue.main.async { self.status = "等待 Tailscale 连接" } }
+        if targets.isEmpty { DispatchQueue.main.async { self.status = "Waiting for Tailscale" } }
         for host in Array(listeners.keys) where !targets.contains(host) {
             listeners.removeValue(forKey: host)?.cancel()
             DispatchQueue.main.async {
                 self.addresses.removeAll { $0 == "http://\(host):\(self.port)" }
-                self.status = self.addresses.isEmpty ? "等待 Tailscale 连接" : "Tailscale 已连接"
+                self.status = self.addresses.isEmpty ? "Waiting for Tailscale" : "Tailscale connected"
             }
         }
         for host in targets where listeners[host] == nil {
@@ -138,9 +138,9 @@ final class RemoteServer: ObservableObject {
                 DispatchQueue.main.async {
                     let url = "http://\(host):\(self.port)"
                     if !self.addresses.contains(url) { self.addresses.append(url); self.addresses.sort() }
-                    self.status = "Tailscale 已连接"
+                    self.status = "Tailscale connected"
                 }
-            } catch { DispatchQueue.main.async { self.status = "端口 \(self.port) 无法监听：\(error.localizedDescription)" } }
+            } catch { DispatchQueue.main.async { self.status = "Port \(self.port) cannot listen: \(error.localizedDescription)" } }
         }
     }
     private func accept(_ connection: HTTPConnection) {
@@ -211,7 +211,7 @@ final class RemoteServer: ObservableObject {
                 handler { code, data in
                     self.queue.async {
                         if code == 200, let data { self.respondData(connection, id, 200, data, type: "image/jpeg") }
-                        else { self.respond(connection, id, code, code == 403 ? "请在 Mac 上允许摄像头权限" : code == 409 ? "正在处理，请稍候" : "暂时无法获取画面，请重试") }
+                        else { self.respond(connection, id, code, code == 403 ? "Allow camera access on the Mac" : code == 409 ? "Busy. Please wait." : "Unable to capture a photo. Please retry.") }
                     }
                 }
             }
@@ -244,9 +244,9 @@ final class RemoteServer: ObservableObject {
         }
     }
     static let page = #"""
-<!doctype html><html lang="zh-Hans"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>MenuCam</title><meta name="menucam-version" content="1.5.10"><link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="/favicon-v1.5.3.ico"><link rel="shortcut icon" href="/favicon-v1.5.3.ico"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v1.5.3.png"><meta name="apple-mobile-web-app-title" content="MenuCam">
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>MenuCam</title><meta name="menucam-version" content="1.5.12"><link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="/favicon-v1.5.3.ico"><link rel="shortcut icon" href="/favicon-v1.5.3.ico"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v1.5.3.png"><meta name="apple-mobile-web-app-title" content="MenuCam">
 <style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;background:light-dark(#f2f4f6,#16191d);font:16px -apple-system,BlinkMacSystemFont,sans-serif;color:light-dark(#192126,#eef3f4)}main{max-width:420px;margin:auto;padding:32px 20px}h1{font-size:22px;margin:0 0 24px}.card{border-radius:14px;padding:24px;background:light-dark(white,#23282e);text-align:center}#phase,#notice{color:light-dark(#57636c,#a9b5bc);font-size:14px}#clock{cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none;font:42px ui-monospace,monospace;font-variant-numeric:tabular-nums;margin:28px 0}button{font:600 17px -apple-system,sans-serif;border-radius:10px;padding:16px;width:100%;min-height:52px;border:0;background:#109c96;color:white;cursor:pointer}button:disabled{opacity:.45;cursor:default}.stop{background:#d54949}#message{white-space:pre-wrap;font-size:13px;color:light-dark(#57636c,#a9b5bc);overflow-wrap:anywhere;text-align:left}#message:empty{display:none}#notice{text-align:center;line-height:1.5}[hidden]{display:none!important}#shot{width:100%;max-height:65vh;object-fit:contain;border-radius:8px;cursor:pointer;margin:16px 0;touch-action:manipulation}#photoStatus{font-size:13px;text-align:center;padding:16px 0;color:light-dark(#57636c,#a9b5bc)}#login{text-align:left}#login h2{font-size:18px;margin:0 0 12px}.authHelp,#authError{font-size:13px;line-height:1.5;color:light-dark(#57636c,#a9b5bc)}#login label{font-size:13px}#authKey{display:block;width:100%;min-height:48px;margin:8px 0 16px;padding:12px;border-radius:8px;border:1px solid #83919a;background:transparent;color:inherit;font:16px -apple-system,sans-serif}#authError:empty{display:none}</style>
-<main><h1>MenuCam</h1><section id="login" class="card"><form id="authForm"><h2>设备授权</h2><p class="authHelp">首次使用，请粘贴从 Mac 复制的完整控制链接或访问密钥。</p><label for="authKey">控制链接或密钥</label><input id="authKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="粘贴控制链接或密钥" required><button id="authorize" type="submit">授权并连接</button><p id="authError" role="status"></p></form></section><section id="control" class="card" hidden><span id="phase" role="status">连接中…</span><div id="clock" role="button" tabindex="0" aria-label="三连点获取当前画面">00:00:00</div><p id="photoStatus" role="status" hidden></p><img id="shot" alt="当前摄像头画面" role="button" tabindex="0" aria-label="收起照片，恢复时间" hidden><button id="action" disabled>开始录像</button><p id="message"></p></section><p id="notice" role="status"></p></main>
+<main><h1>MenuCam</h1><section id="login" class="card"><form id="authForm"><h2>Device Authorization</h2><p class="authHelp">First time here? Paste the full control link or access key copied from your Mac.</p><label for="authKey">Control link or access key</label><input id="authKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste control link or access key" required><button id="authorize" type="submit">Authorize &amp; Connect</button><p id="authError" role="status"></p></form></section><section id="control" class="card" hidden><span id="phase" role="status">Connecting…</span><div id="clock" role="button" tabindex="0" aria-label="Triple-tap for a current photo">00:00:00</div><p id="photoStatus" role="status" hidden></p><img id="shot" alt="Current camera photo" role="button" tabindex="0" aria-label="Dismiss photo and show timer" hidden><button id="action" disabled>Start Recording</button><p id="message"></p></section><p id="notice" role="status"></p></main>
 <script>
 const $=id=>document.getElementById(id);let token='',state=null,polling=false,pending=false;
 const incoming=new URLSearchParams(location.hash.slice(1)).get('key');
@@ -256,37 +256,37 @@ function rememberAuthorization(){try{localStorage.setItem('menucam-key',token)}c
 $('authForm').onsubmit=async event=>{
  event.preventDefault();const value=$('authKey').value.trim();let candidate=value;
  try{const link=new URL(value);candidate=new URLSearchParams(link.hash.slice(1)).get('key')||''}catch(e){}
- if(!/^[a-fA-F0-9]{64}$/.test(candidate)){showAuthorization('请输入完整控制链接或 64 位访问密钥');return}
- token=candidate;$('authorize').disabled=true;$('authError').textContent='正在验证…';
- try{const status=await request('status');rememberAuthorization();render(status)}catch(e){token='';showAuthorization(e.status===401?'密钥无效，请重新复制控制链接':e.message)}finally{$('authorize').disabled=false}
+ if(!/^[a-fA-F0-9]{64}$/.test(candidate)){showAuthorization('Enter a full control link or a 64-character access key.');return}
+ token=candidate;$('authorize').disabled=true;$('authError').textContent='Verifying…';
+ try{const status=await request('status');rememberAuthorization();render(status)}catch(e){token='';showAuthorization(e.status===401?'Invalid key. Copy the control link again.':e.message)}finally{$('authorize').disabled=false}
 };
-async function request(path,method='GET'){const r=await fetch('/api/'+path,{method,headers:{Authorization:'Bearer '+token},cache:'no-store',signal:AbortSignal.timeout(4000)});if(!r.ok){const error=Error(r.status===401?'控制链接需要重新授权，请从 Mac 复制完整链接':r.status===409?'正在处理，请稍候':'暂时无法连接');error.status=r.status;throw error}return r.json()}
-function render(s){state=s;$('login').hidden=true;$('control').hidden=false;$('phase').textContent=s.phase;$('clock').textContent=s.clock;$('message').textContent=s.message;$('action').textContent=s.busy?s.phase+'…':s.recording?'停止并保存':'开始录像';$('action').className=s.recording?'stop':'';$('action').disabled=s.busy||pending;$('notice').textContent=''}
-async function poll(){if(!token){if($('login').hidden)showAuthorization();return}if(polling||pending)return;polling=true;try{const status=await request('status');rememberAuthorization();render(status)}catch(e){state=null;$('action').disabled=true;if(e.status===401){token='';showAuthorization('授权已失效，请重新复制控制链接')}else if(!$('login').hidden){showAuthorization(e.message)}else{$('phase').textContent='未连接';$('notice').textContent=e.message}}finally{polling=false}}
+async function request(path,method='GET'){const r=await fetch('/api/'+path,{method,headers:{Authorization:'Bearer '+token},cache:'no-store',signal:AbortSignal.timeout(4000)});if(!r.ok){const error=Error(r.status===401?'Authorization required. Copy the full control link from your Mac.':r.status===409?'Busy. Please wait.':'Unable to connect');error.status=r.status;throw error}return r.json()}
+function render(s){state=s;$('login').hidden=true;$('control').hidden=false;$('phase').textContent=s.phase;$('clock').textContent=s.clock;$('message').textContent=s.message;$('action').textContent=s.busy?s.phase+'…':s.recording?'Stop & Save':'Start Recording';$('action').className=s.recording?'stop':'';$('action').disabled=s.busy||pending;$('notice').textContent=''}
+async function poll(){if(!token){if($('login').hidden)showAuthorization();return}if(polling||pending)return;polling=true;try{const status=await request('status');rememberAuthorization();render(status)}catch(e){state=null;$('action').disabled=true;if(e.status===401){token='';showAuthorization('Authorization expired. Copy the control link again.')}else if(!$('login').hidden){showAuthorization(e.message)}else{$('phase').textContent='Disconnected';$('notice').textContent=e.message}}finally{polling=false}}
 let taps=0,lastTap=0,photoBusy=false,photoVisible=false,photoController=null,photoGeneration=0;
 function hidePhoto(){
  photoGeneration++;if(photoController)photoController.abort();photoController=null;photoBusy=false;photoVisible=false;
  $('shot').onload=null;$('shot').onerror=null;$('shot').hidden=true;$('shot').removeAttribute('src');$('photoStatus').hidden=true;$('photoStatus').textContent='';$('clock').hidden=false;
 }
-function photoDataURL(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('照片读取失败，请重试'));reader.readAsDataURL(blob)})}
+function photoDataURL(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('Unable to read the photo. Please retry.'));reader.readAsDataURL(blob)})}
 async function takePhoto(){
  if(photoBusy)return;
- if(!state||state.busy){$('photoStatus').hidden=false;$('photoStatus').textContent='正在处理，请稍候';return}
- hidePhoto();const generation=photoGeneration;photoBusy=true;$('clock').hidden=true;$('photoStatus').hidden=false;$('photoStatus').textContent='正在获取当前画面…';
+ if(!state||state.busy){$('photoStatus').hidden=false;$('photoStatus').textContent='Busy. Please wait.';return}
+ hidePhoto();const generation=photoGeneration;photoBusy=true;$('clock').hidden=true;$('photoStatus').hidden=false;$('photoStatus').textContent='Capturing current photo…';
  const controller=new AbortController();photoController=controller;const deadline=setTimeout(()=>controller.abort(),9000);
  try{
   const r=await fetch('/api/snapshot',{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:controller.signal});
-  if(!r.ok)throw Error(r.status===403?'请在 Mac 上允许摄像头权限':r.status===409?'正在处理，请稍候':r.status===401?'请从 Mac 重新复制控制链接':'暂时无法获取画面，请重试');
-  const image=await r.blob();if(!image.size)throw Error('照片为空，请重试');
+  if(!r.ok)throw Error(r.status===403?'Allow camera access on the Mac':r.status===409?'Busy. Please wait.':r.status===401?'Copy the control link from your Mac again.':'Unable to capture a photo. Please retry.');
+  const image=await r.blob();if(!image.size)throw Error('Empty photo. Please retry.');
   const dataURL=await photoDataURL(image);if(generation!==photoGeneration)return;
   await new Promise((resolve,reject)=>{
-   const shot=$('shot'),timer=setTimeout(()=>finish(Error('照片加载超时，请重试')),2000);
+   const shot=$('shot'),timer=setTimeout(()=>finish(Error('Photo loading timed out. Please retry.')),2000);
    function finish(error){clearTimeout(timer);shot.onload=null;shot.onerror=null;error?reject(error):resolve()}
-   shot.onload=()=>finish();shot.onerror=()=>finish(Error('照片无法显示，请重试'));shot.src=dataURL;
-   if(shot.complete){shot.naturalWidth?finish():finish(Error('照片无法显示，请重试'))}
+   shot.onload=()=>finish();shot.onerror=()=>finish(Error('Unable to display the photo. Please retry.'));shot.src=dataURL;
+   if(shot.complete){shot.naturalWidth?finish():finish(Error('Unable to display the photo. Please retry.'))}
   });
   if(generation===photoGeneration){$('shot').hidden=false;$('photoStatus').hidden=true;photoVisible=true}
- }catch(e){if(generation===photoGeneration){$('shot').hidden=true;$('shot').removeAttribute('src');$('clock').hidden=false;$('photoStatus').hidden=false;$('photoStatus').textContent=e.name==='AbortError'?'获取超时，请再点三下时间重试':e.message}}
+ }catch(e){if(generation===photoGeneration){$('shot').hidden=true;$('shot').removeAttribute('src');$('clock').hidden=false;$('photoStatus').hidden=false;$('photoStatus').textContent=e.name==='AbortError'?'Capture timed out. Triple-tap the timer to retry.':e.message}}
  finally{clearTimeout(deadline);if(generation===photoGeneration){photoBusy=false;photoController=null}}
 }
 function tapClock(){const now=performance.now();taps=now-lastTap<450?taps+1:1;lastTap=now;if(taps===3){taps=0;takePhoto()}}

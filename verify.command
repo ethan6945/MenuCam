@@ -25,3 +25,6 @@ fi
 
 xcrun swiftc -swift-version 5 Sources/CameraFrameReadiness.swift Tests/CameraFrameReadinessTests.swift -o "$VERIFY_DIR/readiness" -framework CoreImage
 "$VERIFY_DIR/readiness"
+
+xcrun swiftc -O -swift-version 5 -target arm64-apple-macosx13.0 Sources/AdaptiveWriter.swift Sources/CameraFrameReadiness.swift Sources/RemoteServer.swift Sources/WebIcon.swift Tests/RecordingSnapshotTests.swift -o "$VERIFY_DIR/live-photos" -framework AVFoundation -framework CoreImage -framework Network -framework Security
+"$VERIFY_DIR/live-photos"

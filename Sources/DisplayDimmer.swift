@@ -50,16 +50,16 @@ final class SystemDisplaySettings: DisplaySettingsBackend {
         guard let has = function("DisplayServicesHasAmbientLightCompensation", HasAutomatic.self),
               function("DisplayServicesEnableAmbientLightCompensation", SetAutomatic.self) != nil,
               function("DisplayServicesSetBrightness", SetBrightness.self) != nil else {
-            throw Self.error("屏幕亮度控制接口不可用")
+            throw Self.error("Display brightness controls are unavailable")
         }
         var result: [DisplaySnapshot] = []
         for id in displays() {
             guard let value = brightness(id), let identifier = uuid(id) else {
-                if CGDisplayIsBuiltin(id) != 0 { throw Self.error("无法读取内置屏幕亮度") }
+                if CGDisplayIsBuiltin(id) != 0 { throw Self.error("Unable to read built-in display brightness") }
                 continue // Unsupported external screens are still covered by black windows.
             }
             let auto = has(id) ? automatic(id) : nil
-            if has(id) && auto == nil { throw Self.error("无法读取自动亮度状态") }
+            if has(id) && auto == nil { throw Self.error("Unable to read automatic brightness settings") }
             result.append(DisplaySnapshot(uuid: identifier, brightness: value, automatic: auto))
         }
         return result
@@ -100,19 +100,19 @@ final class DisplayDimmer {
         guard previous.isEmpty else { throw NSError(domain: "MenuCam.Display", code: 2, userInfo: [NSLocalizedDescriptionKey: previous]) }
         let snapshots = try backend.capture()
         defaults.set(try JSONEncoder().encode(snapshots), forKey: key)
-        guard defaults.synchronize() else { throw NSError(domain: "MenuCam.Display", code: 3, userInfo: [NSLocalizedDescriptionKey: "无法保存亮度恢复记录"]) }
+        guard defaults.synchronize() else { throw NSError(domain: "MenuCam.Display", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unable to save display recovery settings"]) }
         for snapshot in snapshots where !backend.apply(snapshot, dimmed: true) {
             let recovery = restore()
-            throw NSError(domain: "MenuCam.Display", code: 4, userInfo: [NSLocalizedDescriptionKey: "无法关闭屏幕亮度／自动亮度。\(recovery)"])
+            throw NSError(domain: "MenuCam.Display", code: 4, userInfo: [NSLocalizedDescriptionKey: "Unable to dim the display or disable automatic brightness. \(recovery)"])
         }
     }
     @discardableResult func restore() -> String {
         guard let data = defaults.data(forKey: key) else { return "" }
-        guard let snapshots = try? JSONDecoder().decode([DisplaySnapshot].self, from: data) else { return "屏幕恢复记录无法读取" }
+        guard let snapshots = try? JSONDecoder().decode([DisplaySnapshot].self, from: data) else { return "Unable to read display recovery settings" }
         let remaining = snapshots.filter { !backend.apply($0, dimmed: false) }
         if remaining.isEmpty { defaults.removeObject(forKey: key) }
         else { defaults.set(try? JSONEncoder().encode(remaining), forKey: key) }
         defaults.synchronize()
-        return remaining.isEmpty ? "" : "屏幕亮度／自动亮度未完全恢复，保留记录待重试"
+        return remaining.isEmpty ? "" : "Display settings were not fully restored. Recovery settings are kept for retry."
     }
 }
