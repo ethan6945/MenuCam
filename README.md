@@ -2,6 +2,18 @@
 
 A native macOS menu bar camera recorder with authenticated Tailscale web control.
 
+## Screenshots
+
+### Menu bar
+
+<img src="docs/screenshots/menu-bar.png" width="552" alt="MenuCam menu bar popover showing the control address and Quit">
+
+### Mobile web
+
+<img src="docs/screenshots/web-control.png" width="320" alt="MenuCam web recording controls and elapsed timer"> <img src="docs/screenshots/web-authorization.png" width="320" alt="MenuCam first-device authorization page">
+
+Left: recording controls. Right: first-device authorization. Screenshots use an example address and demonstration state; no real camera images or credentials are shown.
+
 ## Features
 
 - Compact menu bar popover: control link and Quit.

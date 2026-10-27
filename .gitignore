@@ -14,3 +14,6 @@ verify/
 remote-key
 .env
 .env.*
+
+# Public-facing product screenshots
+!docs/screenshots/*.png
