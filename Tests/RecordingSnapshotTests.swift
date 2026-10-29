@@ -4,7 +4,7 @@ import CoreImage
 
 @main struct RecordingSnapshotTests {
     static func main() throws {
-        guard let host = RemoteServer.tailAddresses().first else { fatalError("Tailscale required") }
+        let host = "127.0.0.1"
         let root=URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("MenuCam-livePhoto-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let file=root.appendingPathComponent("continuous.mov")

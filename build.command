@@ -17,8 +17,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>MenuCam</string>
 <key>CFBundleDisplayName</key><string>MenuCam</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.5.12</string>
-<key>CFBundleVersion</key><string>29</string>
+<key>CFBundleShortVersionString</key><string>1.6.0</string>
+<key>CFBundleVersion</key><string>30</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>

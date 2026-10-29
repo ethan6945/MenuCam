@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 import AVFoundation
 import IOKit.pwr_mgt
+import Darwin
 
 final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
     @Published var phase = "Idle"
@@ -12,19 +13,9 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
     @Published var message = ""
     @Published var folder: URL
     @Published var quality: String { didSet { UserDefaults.standard.set(quality, forKey: "quality") } }
-    @Published var iconName: String { didSet {
-        UserDefaults.standard.set(iconName, forKey: "iconName")
-        onChange?()
-    } }
     @Published var cameraNote = ""
     @Published var audioActive = false
     @Published var lastFile: URL?
-    func menuImage() -> NSImage? {
-        let image = NSImage(systemSymbolName: iconName, accessibilityDescription: "MenuCam") ?? NSImage(systemSymbolName: "link", accessibilityDescription: "MenuCam")
-        image?.size = NSSize(width: 17, height: 17)
-        image?.isTemplate = true
-        return image
-    }
     @Published var quietNote = ""
     let remote = RemoteServer()
     private let quiet = QuietMode()
@@ -58,7 +49,6 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
         let defaults = UserDefaults.standard
         folder = defaults.url(forKey: "folder") ?? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0].appendingPathComponent("MenuCam", isDirectory: true)
         quality = "1080p"
-        iconName = "link"
         super.init()
         quietNote = [quiet.restore(), blackout.recover()].filter { !$0.isEmpty }.joined(separator: " · ")
         blackout.onStop = { [weak self] in self?.stop() }
@@ -455,141 +445,135 @@ final class Recorder: NSObject, ObservableObject, @unchecked Sendable {
     var clock: String { Self.formatClock(elapsed) }
 }
 
-struct Panel: View {
-    @ObservedObject var model: Recorder
-    var quit: () -> Void
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "link")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            RemoteFooter(server: model.remote)
-            Spacer(minLength: 0)
-            Button("Quit", action: quit).buttonStyle(.borderless).font(.system(size: 11))
-        }.padding(10).frame(width: 250).fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-struct RemoteFooter: View {
+struct ControlWindow: View {
     @ObservedObject var server: RemoteServer
+    var quit: () -> Void
+    @State private var copied = false
+
     var body: some View {
-        Group {
-            if let address = server.controlAddress, let link = server.controlURL {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "video.fill").font(.title2).foregroundStyle(.teal)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("MenuCam").font(.headline)
+                    Text(server.status).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Quit", action: quit).buttonStyle(.borderless)
+                    .help("Save any active recording and quit MenuCam")
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                addressRow("Tailscale", address: server.controlAddress, link: server.controlURL)
+                Divider()
+                addressRow("This Mac", address: server.localAddress, link: server.localURL)
+            }.padding(12).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            HStack {
+                Button(copied ? "Copied" : "Copy Control Link") {
+                    guard let link = server.controlURL ?? server.localURL else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(link.absoluteString, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+                }.disabled(server.controlURL == nil && server.localURL == nil)
+                Spacer()
+                Text("Close to keep running").font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(20).frame(width: 390)
+    }
+    @ViewBuilder private func addressRow(_ title: String, address: String?, link: URL?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            if let address, let link {
                 Button(address) { NSWorkspace.shared.open(link) }
-                    .buttonStyle(.plain)
-                    .help("Open remote control; right-click to copy the link")
+                    .buttonStyle(.plain).font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled).help("Open authenticated web control")
                     .contextMenu {
-                        Button("Copy Control Link") {
+                        Button("Copy Link") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(link.absoluteString, forType: .string)
                         }
                     }
-            } else { Text(server.status) }
-        }.font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Text("Waiting for connection…").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = Recorder()
-    var item: NSStatusItem!
-    let popover = NSPopover()
-    var panelController: NSViewController?
-    var waitingToQuit = false
-    var outsideMonitor: Any?
-    var resignObserver: NSObjectProtocol?
-    private var sizingSubscription: AnyCancellable?
+    private var window: NSWindow!
+    private var waitingToQuit = false
+    private var reopenObserver: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        // Tight fixed width, icon only: a fixed length keeps the popover anchor
-        // stable when the symbol or recording state changes.
-        item = NSStatusBar.system.statusItem(withLength: 26)
-        item.button?.target = self
-        item.button?.action = #selector(toggle)
-        popover.behavior = .transient
-        popover.animates = false
-        // A plain AppKit container owns the popover size. SwiftUI only draws its content.
-        let controller = NSViewController()
-        controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 250, height: 280))
-        let hostingView = NSHostingView(rootView: Panel(model: model, quit: { NSApp.terminate(nil) }))
-        hostingView.frame = controller.view.bounds
-        hostingView.autoresizingMask = [.width, .height]
-        controller.view.addSubview(hostingView)
-        panelController = controller
-        popover.contentViewController = controller
-        model.onChange = { [weak self] in self?.updateIcon() }
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 430, height: 240),
+                          styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = "MenuCam"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: ControlWindow(server: model.remote, quit: { NSApp.terminate(nil) }))
+        window.center()
         model.onFinished = { [weak self] in
-            if self?.waitingToQuit == true { NSApp.reply(toApplicationShouldTerminate: true) }
+            if self?.waitingToQuit == true {
+                self?.waitingToQuit = false
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
         }
-        // Dismiss like every other macOS popover: a click that lands anywhere
-        // outside this app (other apps, the desktop) closes the panel, and so
-        // does the app losing focus. Clicks on our own menu bar icon still go
-        // through toggle() instead.
-        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, self.popover.isShown else { return }
-            self.popover.performClose(nil)
-        }
-        resignObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
-            guard let self, self.popover.isShown else { return }
-            self.popover.performClose(nil)
-        }
-        sizingSubscription = model.objectWillChange.merge(with: model.remote.objectWillChange)
-            .debounce(for: .milliseconds(10), scheduler: RunLoop.main)
-            .sink { [weak self] in self?.resizePanel() }
+        model.remote.quitHandler = { NSApp.terminate(nil) }
+        reopenObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("local.junxian.MenuCam.reopen"), object: nil, queue: .main
+        ) { [weak self] _ in self?.showWindow() }
         model.startRemote()
-        updateIcon()
-        toggle()
+        showWindow()
     }
-    func updateIcon() {
-        item.button?.image = model.menuImage()
-        item.button?.contentTintColor = model.recording ? .systemRed : nil
-        item.button?.toolTip = "MenuCam · \(model.phase)"
+    private func showWindow() {
+        window?.deminiaturize(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
-    private func resizePanel() {
-        let size = panelSize()
-        if abs(popover.contentSize.height - size.height) > 1 || abs(popover.contentSize.width - size.width) > 1 { apply(size: size) }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showWindow()
+        return false
     }
-    private func panelSize() -> NSSize {
-        let screen = item.button?.window?.screen ?? NSScreen.main
-        let available = (screen?.visibleFrame.height ?? 720) - 32
-        // Measure unconstrained SwiftUI content, not the controller's already-sized view.
-        // NSHostingController.fittingSize otherwise reports its current height after updates.
-        let measurement = NSHostingView(rootView: Panel(model: model, quit: {}))
-        let measured = measurement.fittingSize.height
-        return NSSize(width: 250, height: min(ceil(measured > 0 ? measured : 280), available))
-    }
-    private func apply(size: NSSize) {
-        popover.contentSize = size
-    }
-    @objc func toggle() {
-        if popover.isShown { popover.performClose(nil) }
-        else if let button = item.button {
-            let size = panelSize()
-            apply(size: size)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationWillTerminate(_ notification: Notification) { model.restoreEnvironmentOnExit() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if waitingToQuit { return .terminateLater }
         if model.recording || model.busy {
-            if model.busy && !model.recording { return .terminateCancel }
+            // Preparation and snapshots must finish before restoring/exiting too.
             waitingToQuit = true
-            model.stop()
+            if model.recording && !model.busy { model.stop() }
+            else { waitForSafeQuit() }
             return .terminateLater
         }
         return .terminateNow
+    }
+    private func waitForSafeQuit() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self, self.waitingToQuit else { return }
+            if self.model.busy { self.waitForSafeQuit() }
+            else if self.model.recording { self.model.stop() }
+            else { self.waitingToQuit = false; NSApp.reply(toApplicationShouldTerminate: true) }
+        }
     }
 }
 
 @main
 struct MenuCamApp {
+    // Retain an advisory lock for the process lifetime, including simultaneous launches.
+    private static var instanceLock: Int32 = -1
     static func main() {
         let app = NSApplication.shared
-        // Check before constructing Recorder: a second copy must not restore the active take's journal.
-        let identifier = Bundle.main.bundleIdentifier ?? "local.junxian.MenuCam"
-        if let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
-            existing.activate(options: [.activateIgnoringOtherApps])
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MenuCam", isDirectory: true)
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        catch { return }
+        instanceLock = open(directory.appendingPathComponent("instance.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard instanceLock >= 0 else { return }
+        guard flock(instanceLock, LOCK_EX | LOCK_NB) == 0 else {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("local.junxian.MenuCam.reopen"), object: nil, userInfo: nil, deliverImmediately: true)
             return
         }
         let delegate = AppDelegate()

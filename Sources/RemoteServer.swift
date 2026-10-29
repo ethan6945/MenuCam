@@ -54,7 +54,7 @@ private final class HTTPListener {
 }
 
 /// No wildcard binding, port forwarding, Serve or Funnel. Listens only on
-/// IPv4 Tailscale utun interfaces; this Mac uses the same address as the phone. All recorder access stays on the main queue.
+/// IPv4 Tailscale utun interfaces and loopback. All recorder access stays on the main queue.
 final class RemoteServer: ObservableObject {
     let port: UInt16
     init(port: UInt16 = 8765) { self.port = port }
@@ -69,8 +69,12 @@ final class RemoteServer: ObservableObject {
     private var window = Date()
     private var handler: ((String) -> (Int, [String: Any]))?
     var snapshotHandler: ((@escaping (Int, Data?) -> Void) -> Void)?
+    var quitHandler: (() -> Void)?
+    private var started = false
+    var localAddress: String? { addresses.first { $0.contains("127.0.0.1") } }
+    var localURL: URL? { localAddress.flatMap { token.isEmpty ? nil : URL(string: $0 + "#key=" + token) } }
     var accessKey: String { token }
-    var controlAddress: String? { addresses.sorted().first }
+    var controlAddress: String? { addresses.filter { !$0.contains("127.0.0.1") }.sorted().first }
     var controlURL: URL? {
         guard let address = controlAddress, !token.isEmpty else { return nil }
         return URL(string: address + "#key=" + token)
@@ -109,10 +113,12 @@ final class RemoteServer: ObservableObject {
         return value
     }
     func start(directory: URL? = nil, handler: @escaping (String) -> (Int, [String: Any])) {
+        guard !started else { return }
         self.handler = handler
         do {
             token = try Self.loadKey(directory: directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MenuCam", isDirectory: true))
         } catch { status = "Remote server could not start: \(error.localizedDescription)"; return }
+        started = true
         queue.async {
             self.updateListeners()
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
@@ -122,13 +128,14 @@ final class RemoteServer: ObservableObject {
         }
     }
     private func updateListeners() {
-        let targets = Set(Self.tailAddresses())
-        if targets.isEmpty { DispatchQueue.main.async { self.status = "Waiting for Tailscale" } }
+        let tails = Self.tailAddresses()
+        let targets = Set(tails + ["127.0.0.1"])
+        DispatchQueue.main.async { self.status = tails.isEmpty ? "Local ready · Waiting for Tailscale" : "Tailscale connected" }
         for host in Array(listeners.keys) where !targets.contains(host) {
             listeners.removeValue(forKey: host)?.cancel()
             DispatchQueue.main.async {
                 self.addresses.removeAll { $0 == "http://\(host):\(self.port)" }
-                self.status = self.addresses.isEmpty ? "Waiting for Tailscale" : "Tailscale connected"
+                self.status = self.controlAddress == nil ? "Local ready · Waiting for Tailscale" : "Tailscale connected"
             }
         }
         for host in targets where listeners[host] == nil {
@@ -138,7 +145,7 @@ final class RemoteServer: ObservableObject {
                 DispatchQueue.main.async {
                     let url = "http://\(host):\(self.port)"
                     if !self.addresses.contains(url) { self.addresses.append(url); self.addresses.sort() }
-                    self.status = "Tailscale connected"
+                    self.status = self.controlAddress == nil ? "Local ready · Waiting for Tailscale" : "Tailscale connected"
                 }
             } catch { DispatchQueue.main.async { self.status = "Port \(self.port) cannot listen: \(error.localizedDescription)" } }
         }
@@ -197,7 +204,7 @@ final class RemoteServer: ObservableObject {
             if let icon { respondData(connection, id, 200, icon.0, type: icon.1); return }
         }
         if first[0] == "GET", first[1] == "/" { respond(connection, id, 200, Self.page, type: "text/html; charset=utf-8"); return }
-        guard ["/api/status", "/api/start", "/api/stop", "/api/snapshot"].contains(first[1]) else { respond(connection, id, 404, "Not found"); return }
+        guard ["/api/status", "/api/start", "/api/stop", "/api/snapshot", "/api/quit"].contains(first[1]) else { respond(connection, id, 404, "Not found"); return }
         if Date().timeIntervalSince(window) > 60 { failures = 0; window = Date() }
         guard failures < 60 else { respond(connection, id, 429, "Try again later"); return }
         let supplied = Array((headers["authorization"] ?? "").utf8), expected = Array("Bearer \(token)".utf8)
@@ -205,6 +212,12 @@ final class RemoteServer: ObservableObject {
         for i in expected.indices { difference |= Int(expected[i] ^ (i < supplied.count ? supplied[i] : 0)) }
         guard difference == 0 else { failures += 1; respond(connection, id, 401, "Unauthorized"); return }
         guard first[0] == (["/api/status", "/api/snapshot"].contains(first[1]) ? "GET" : "POST") else { respond(connection, id, 405, "Method denied"); return }
+        if first[1] == "/api/quit" {
+            respondData(connection, id, 200, Data("{\"quitting\":true}".utf8), type: "application/json") {
+                DispatchQueue.main.async { self.quitHandler?() }
+            }
+            return
+        }
         if first[1] == "/api/snapshot" {
             DispatchQueue.main.async {
                 guard let handler = self.snapshotHandler else { self.queue.async { self.respond(connection, id, 503, "Snapshot unavailable") }; return }
@@ -226,7 +239,7 @@ final class RemoteServer: ObservableObject {
     private func respond(_ connection: HTTPConnection, _ id: UUID, _ code: Int, _ body: String, type: String = "text/plain; charset=utf-8") {
         respondData(connection, id, code, Data(body.utf8), type: type)
     }
-    private func respondData(_ connection: HTTPConnection, _ id: UUID, _ code: Int, _ data: Data, type: String) {
+    private func respondData(_ connection: HTTPConnection, _ id: UUID, _ code: Int, _ data: Data, type: String, completion: (() -> Void)? = nil) {
         let head = "HTTP/1.1 \(code) \(code == 200 ? "OK" : "Error")\r\nContent-Type: \(type)\r\nContent-Length: \(data.count)\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; img-src 'self' data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\r\n"
         let response = Data(head.utf8) + data
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -240,18 +253,19 @@ final class RemoteServer: ObservableObject {
                 }
             }
             connection.cancel()
+            completion?()
             self?.queue.async { [weak self] in self?.clients.removeValue(forKey: id) }
         }
     }
     static let page = #"""
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>MenuCam</title><meta name="menucam-version" content="1.5.12"><link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="/favicon-v1.5.3.ico"><link rel="shortcut icon" href="/favicon-v1.5.3.ico"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v1.5.3.png"><meta name="apple-mobile-web-app-title" content="MenuCam">
-<style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;background:light-dark(#f2f4f6,#16191d);font:16px -apple-system,BlinkMacSystemFont,sans-serif;color:light-dark(#192126,#eef3f4)}main{max-width:420px;margin:auto;padding:32px 20px}h1{font-size:22px;margin:0 0 24px}.card{border-radius:14px;padding:24px;background:light-dark(white,#23282e);text-align:center}#phase,#notice{color:light-dark(#57636c,#a9b5bc);font-size:14px}#clock{cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none;font:42px ui-monospace,monospace;font-variant-numeric:tabular-nums;margin:28px 0}button{font:600 17px -apple-system,sans-serif;border-radius:10px;padding:16px;width:100%;min-height:52px;border:0;background:#109c96;color:white;cursor:pointer}button:disabled{opacity:.45;cursor:default}.stop{background:#d54949}#message{white-space:pre-wrap;font-size:13px;color:light-dark(#57636c,#a9b5bc);overflow-wrap:anywhere;text-align:left}#message:empty{display:none}#notice{text-align:center;line-height:1.5}[hidden]{display:none!important}#shot{width:100%;max-height:65vh;object-fit:contain;border-radius:8px;cursor:pointer;margin:16px 0;touch-action:manipulation}#photoStatus{font-size:13px;text-align:center;padding:16px 0;color:light-dark(#57636c,#a9b5bc)}#login{text-align:left}#login h2{font-size:18px;margin:0 0 12px}.authHelp,#authError{font-size:13px;line-height:1.5;color:light-dark(#57636c,#a9b5bc)}#login label{font-size:13px}#authKey{display:block;width:100%;min-height:48px;margin:8px 0 16px;padding:12px;border-radius:8px;border:1px solid #83919a;background:transparent;color:inherit;font:16px -apple-system,sans-serif}#authError:empty{display:none}</style>
-<main><h1>MenuCam</h1><section id="login" class="card"><form id="authForm"><h2>Device Authorization</h2><p class="authHelp">First time here? Paste the full control link or access key copied from your Mac.</p><label for="authKey">Control link or access key</label><input id="authKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste control link or access key" required><button id="authorize" type="submit">Authorize &amp; Connect</button><p id="authError" role="status"></p></form></section><section id="control" class="card" hidden><span id="phase" role="status">Connecting…</span><div id="clock" role="button" tabindex="0" aria-label="Triple-tap for a current photo">00:00:00</div><p id="photoStatus" role="status" hidden></p><img id="shot" alt="Current camera photo" role="button" tabindex="0" aria-label="Dismiss photo and show timer" hidden><button id="action" disabled>Start Recording</button><p id="message"></p></section><p id="notice" role="status"></p></main>
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>MenuCam</title><meta name="menucam-version" content="1.6.0"><link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="/favicon-v1.5.3.ico"><link rel="shortcut icon" href="/favicon-v1.5.3.ico"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v1.5.3.png"><meta name="apple-mobile-web-app-title" content="MenuCam">
+<style>:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;background:light-dark(#f2f4f6,#16191d);font:16px -apple-system,BlinkMacSystemFont,sans-serif;color:light-dark(#192126,#eef3f4)}main{max-width:420px;margin:auto;padding:32px 20px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}h1{font-size:22px;margin:0}#quit{width:auto;min-height:32px;padding:6px 12px;font-size:12px;background:transparent;color:inherit;border:1px solid #83919a;border-radius:8px}.card{border-radius:14px;padding:24px;background:light-dark(white,#23282e);text-align:center}#phase,#notice{color:light-dark(#57636c,#a9b5bc);font-size:14px}#clock{cursor:pointer;touch-action:manipulation;user-select:none;-webkit-user-select:none;font:42px ui-monospace,monospace;font-variant-numeric:tabular-nums;margin:28px 0}button{font:600 17px -apple-system,sans-serif;border-radius:10px;padding:16px;width:100%;min-height:52px;border:0;background:#109c96;color:white;cursor:pointer}button:disabled{opacity:.45;cursor:default}.stop{background:#d54949}#message{white-space:pre-wrap;font-size:13px;color:light-dark(#57636c,#a9b5bc);overflow-wrap:anywhere;text-align:left}#message:empty{display:none}#notice{text-align:center;line-height:1.5}[hidden]{display:none!important}#shot{width:100%;max-height:65vh;object-fit:contain;border-radius:8px;cursor:pointer;margin:16px 0;touch-action:manipulation}#photoStatus{font-size:13px;text-align:center;padding:16px 0;color:light-dark(#57636c,#a9b5bc)}#login{text-align:left}#login h2{font-size:18px;margin:0 0 12px}.authHelp,#authError{font-size:13px;line-height:1.5;color:light-dark(#57636c,#a9b5bc)}#login label{font-size:13px}#authKey{display:block;width:100%;min-height:48px;margin:8px 0 16px;padding:12px;border-radius:8px;border:1px solid #83919a;background:transparent;color:inherit;font:16px -apple-system,sans-serif}#authError:empty{display:none}</style>
+<main><header><h1>MenuCam</h1><button id="quit" hidden title="Save recording and quit MenuCam">Quit</button></header><section id="login" class="card"><form id="authForm"><h2>Device Authorization</h2><p class="authHelp">First time here? Paste the full control link or access key copied from your Mac.</p><label for="authKey">Control link or access key</label><input id="authKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Paste control link or access key" required><button id="authorize" type="submit">Authorize &amp; Connect</button><p id="authError" role="status"></p></form></section><section id="control" class="card" hidden><span id="phase" role="status">Connecting…</span><div id="clock" role="button" tabindex="0" aria-label="Triple-tap for a current photo">00:00:00</div><p id="photoStatus" role="status" hidden></p><img id="shot" alt="Current camera photo" role="button" tabindex="0" aria-label="Dismiss photo and show timer" hidden><button id="action" disabled>Start Recording</button><p id="message"></p></section><p id="notice" role="status"></p></main>
 <script>
-const $=id=>document.getElementById(id);let token='',state=null,polling=false,pending=false;
+const $=id=>document.getElementById(id);let token='',state=null,polling=false,pending=false,quitting=false;
 const incoming=new URLSearchParams(location.hash.slice(1)).get('key');
 try{token=incoming||localStorage.getItem('menucam-key')||''}catch(e){token=incoming||''}
-function showAuthorization(message=''){state=null;$('control').hidden=true;$('login').hidden=false;$('authError').textContent=message;$('notice').textContent='';$('authorize').disabled=false}
+function showAuthorization(message=''){state=null;$('quit').hidden=true;$('control').hidden=true;$('login').hidden=false;$('authError').textContent=message;$('notice').textContent='';$('authorize').disabled=false}
 function rememberAuthorization(){try{localStorage.setItem('menucam-key',token)}catch(e){}if(new URLSearchParams(location.hash.slice(1)).get('key')!==token)history.replaceState(null,'',location.pathname+location.search+'#key='+encodeURIComponent(token));$('authKey').value='';$('authError').textContent='';$('login').hidden=true;$('control').hidden=false}
 $('authForm').onsubmit=async event=>{
  event.preventDefault();const value=$('authKey').value.trim();let candidate=value;
@@ -261,8 +275,8 @@ $('authForm').onsubmit=async event=>{
  try{const status=await request('status');rememberAuthorization();render(status)}catch(e){token='';showAuthorization(e.status===401?'Invalid key. Copy the control link again.':e.message)}finally{$('authorize').disabled=false}
 };
 async function request(path,method='GET'){const r=await fetch('/api/'+path,{method,headers:{Authorization:'Bearer '+token},cache:'no-store',signal:AbortSignal.timeout(4000)});if(!r.ok){const error=Error(r.status===401?'Authorization required. Copy the full control link from your Mac.':r.status===409?'Busy. Please wait.':'Unable to connect');error.status=r.status;throw error}return r.json()}
-function render(s){state=s;$('login').hidden=true;$('control').hidden=false;$('phase').textContent=s.phase;$('clock').textContent=s.clock;$('message').textContent=s.message;$('action').textContent=s.busy?s.phase+'…':s.recording?'Stop & Save':'Start Recording';$('action').className=s.recording?'stop':'';$('action').disabled=s.busy||pending;$('notice').textContent=''}
-async function poll(){if(!token){if($('login').hidden)showAuthorization();return}if(polling||pending)return;polling=true;try{const status=await request('status');rememberAuthorization();render(status)}catch(e){state=null;$('action').disabled=true;if(e.status===401){token='';showAuthorization('Authorization expired. Copy the control link again.')}else if(!$('login').hidden){showAuthorization(e.message)}else{$('phase').textContent='Disconnected';$('notice').textContent=e.message}}finally{polling=false}}
+function render(s){if(quitting)return;state=s;$('quit').hidden=false;$('quit').disabled=pending;$('login').hidden=true;$('control').hidden=false;$('phase').textContent=s.phase;$('clock').textContent=s.clock;$('message').textContent=s.message;$('action').textContent=s.busy?s.phase+'…':s.recording?'Stop & Save':'Start Recording';$('action').className=s.recording?'stop':'';$('action').disabled=s.busy||pending;$('notice').textContent=''}
+async function poll(){if(quitting)return;if(!token){if($('login').hidden)showAuthorization();return}if(polling||pending)return;polling=true;try{const status=await request('status');rememberAuthorization();render(status)}catch(e){state=null;$('action').disabled=true;if(e.status===401){token='';showAuthorization('Authorization expired. Copy the control link again.')}else if(!$('login').hidden){showAuthorization(e.message)}else{$('phase').textContent='Disconnected';$('notice').textContent=e.message}}finally{polling=false}}
 let taps=0,lastTap=0,photoBusy=false,photoVisible=false,photoController=null,photoGeneration=0;
 function hidePhoto(){
  photoGeneration++;if(photoController)photoController.abort();photoController=null;photoBusy=false;photoVisible=false;
@@ -293,6 +307,14 @@ function tapClock(){const now=performance.now();taps=now-lastTap<450?taps+1:1;la
 $('clock').onclick=tapClock;$('clock').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tapClock()}};
 $('shot').onclick=hidePhoto;$('shot').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();hidePhoto()}};
 window.addEventListener('pagehide',hidePhoto);
+$('quit').onclick=async()=>{
+ if(pending||quitting)return;
+ if(!confirm('Quit MenuCam? Any active recording will be saved. Reopen the Mac app to reconnect.'))return;
+ pending=true;$('quit').disabled=true;$('action').disabled=true;
+ try{await request('quit','POST');quitting=true;hidePhoto();$('phase').textContent='Quitting';$('notice').textContent='MenuCam is saving any active recording and shutting down. Reopen the Mac app to reconnect.'}
+ catch(e){$('notice').textContent=e.message;$('quit').disabled=false}
+ finally{pending=false;if(!quitting)poll()}
+};
 $('action').onclick=async()=>{if(!state||pending)return;const command=state.recording?'stop':'start';pending=true;$('action').disabled=true;try{render(await request(command,'POST'))}catch(e){$('notice').textContent=e.message}finally{pending=false;poll()}};poll();setInterval(poll,1000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});
 </script></html>
 """#

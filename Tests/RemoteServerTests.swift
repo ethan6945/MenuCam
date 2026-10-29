@@ -10,9 +10,10 @@ import Foundation
             let attrs = try FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent("remote-key").path)
             precondition((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         } catch { fatalError("Key persistence: \(error)") }
-        guard let host = RemoteServer.tailAddresses().first else { fatalError("Connect Tailscale before running the remote integration test") }
+        let host = "127.0.0.1"
         let server = RemoteServer(port: 18765)
-        var recording = false, transitions = 0
+        var recording = false, transitions = 0, quits = 0
+        server.quitHandler = { quits += 1 }
         server.snapshotHandler = { completion in completion(recording ? 200 : 409, recording ? Data([0xff, 0xd8, 0xff, 0xd9]) : nil) }
         server.start(directory: directory) { path in
             if path == "/api/start", !recording { recording = true; transitions += 1 }
@@ -49,6 +50,8 @@ import Foundation
             precondition(page.contains("rel=\"icon\"") && page.contains("rel=\"apple-touch-icon\""))
             _ = check("/api/status", code: 401)
             _ = check("/api/start", "POST", code: 401)
+            _ = check("/api/quit", "POST", code: 401)
+            _ = check("/api/quit", auth: true, code: 405)
             _ = check("/api/snapshot", code: 401)
             _ = check("/api/snapshot", auth: true, code: 409)
             _ = check("/api/snapshot", "POST", auth: true, code: 405)
@@ -62,12 +65,14 @@ import Foundation
             precondition((try! JSONSerialization.jsonObject(with: state) as! [String: Any])["elapsed"] as? Int == 5)
             _ = check("/api/stop", "POST", auth: true)
             _ = check("/api/stop", "POST", auth: true)
+            _ = check("/api/quit", "POST", auth: true)
             _ = check("/unknown", auth: true, code: 404)
             DispatchQueue.main.async {
                 precondition(transitions == 2)
-                precondition(server.controlURL?.fragment == "key=" + server.accessKey)
-                precondition(server.controlAddress == "http://\(host):18765")
-                precondition(server.addresses.allSatisfy { $0.hasPrefix("http://100.") })
+                precondition(quits == 1)
+                precondition(server.localURL?.fragment == "key=" + server.accessKey)
+                precondition(server.localAddress == "http://\(host):18765")
+                precondition(server.addresses.allSatisfy { $0.hasPrefix("http://100.") || $0 == "http://127.0.0.1:18765" })
                 try? FileManager.default.removeItem(at: directory)
                 print("PASS: persistent private key, authentication, origin, methods, start/stop idempotence, live state, response headers and restricted addresses")
                 exit(0)
